@@ -1,12 +1,12 @@
 package com.company;
 
 
-import java.io.BufferedOutputStream;
-import java.io.BufferedReader;
-import java.io.IOException;
-import java.io.InputStreamReader;
+import org.apache.http.NameValuePair;
+
+import java.io.*;
 import java.net.ServerSocket;
 import java.net.Socket;
+import java.net.URISyntaxException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.LocalDateTime;
@@ -45,23 +45,12 @@ public class Server {
 
     public void connect(Socket socket) {
         try (
-                final BufferedReader in = new BufferedReader(new InputStreamReader(socket.getInputStream()));
+                final BufferedInputStream in = new BufferedInputStream(socket.getInputStream());
                 final BufferedOutputStream out = new BufferedOutputStream(socket.getOutputStream());
         ) {
-            // read only request line for simplicity
-            // must be in form GET /path HTTP/1.1
-            final String requestLine = in.readLine();
-            final String[] parts = requestLine.split(" ");
 
-            if (parts.length != 3) {
-                // just close socket
-                return;
-            }
-
-            final String path = parts[1];
-            final String method = parts[0];
-
-            if (!handlers.containsKey(method)) {
+            Request request = Request.createRequest(in);
+            if (request == null || !handlers.containsKey(request.getMethod())) {
                 out.write((
                         "HTTP/1.1 404 Bed Request\r\n" +
                                 "Content-Length: 0\r\n" +
@@ -70,15 +59,28 @@ public class Server {
                 ).getBytes());
                 out.flush();
                 return;
+            } else {
+                System.out.println("Request debug information: ");
+                System.out.println("METHOD: " + request.getMethod());
+                System.out.println("PATH: " + request.getPath());
+                System.out.println("HEADERS: " + request.getHeaders());
+                System.out.println("Query Params:");
+                for (var para : request.getQueryParams()) {
+                    System.out.println(para.getName() + " = " + para.getValue());
+                }
+
+                System.out.println("Test for dumb param name:");
+                System.out.println(request.getQueryParam("YetAnotherDumb").getName());
+                System.out.println("Test for dumb param name-value:");
+                System.out.println(request.getQueryParam("testDebugInfo").getValue());
             }
 
-            Request request = new Request(method, path);
-            Map<String, Handler> handlersMap = handlers.get(method);
-            if (handlersMap.containsKey(path)) {
-                Handler handler = handlersMap.get(path);
+            Map<String, Handler> handlersMap = handlers.get(request.getMethod());
+            if (handlersMap.containsKey(request.getPath())) {
+                Handler handler = handlersMap.get(request.getPath());
                 handler.handle(request, out);
             } else {
-                if (!validPaths.contains(path)) {
+                if (!validPaths.contains(request.getPath())) {
                     out.write((
                             "HTTP/1.1 404 Not Found\r\n" +
                                     "Content-Length: 0\r\n" +
@@ -89,11 +91,11 @@ public class Server {
                     return;
                 } else {
 
-                    final Path filePath = Path.of(".", "public", path);
+                    final Path filePath = Path.of(".", "public", request.getPath());
                     final String mimeType = Files.probeContentType(filePath);
 
                     // special case for classic
-                    if (path.equals("/classic.html")) {
+                    if (request.getPath().equals("/classic.html")) {
                         final String template = Files.readString(filePath);
                         final byte[] content = template.replace(
                                 "{time}",
@@ -124,7 +126,7 @@ public class Server {
                 }
             }
 
-        } catch (IOException e) {
+        } catch (IOException | URISyntaxException e) {
             e.printStackTrace();
         }
     }
@@ -137,4 +139,3 @@ public class Server {
     }
 
 }
-
